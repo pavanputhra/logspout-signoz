@@ -60,6 +60,6 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 			log.Println("signoz 123:", err)
 			return
 		}
-		fmt.Println("%s", buf.String())
+		fmt.Println("Printing logs %s", buf.String())
 	}
 }
