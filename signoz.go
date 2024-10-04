@@ -3,9 +3,8 @@ package signoz
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"log"
-	"net"
 	"os"
 	"text/template"
 
@@ -29,15 +28,15 @@ var funcs = template.FuncMap{
 
 // NewRawAdapter returns a configured raw.Adapter
 func NewRawAdapter(route *router.Route) (router.LogAdapter, error) {
-	transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("udp"))
-	if !found {
-		return nil, errors.New("bad transport: " + route.Adapter)
-	}
-	conn, err := transport.Dial(route.Address, route.Options)
-	if err != nil {
-		return nil, err
-	}
-	tmplStr := "{{.Data}}\n"
+	//transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("udp"))
+	//if !found {
+	//	return nil, errors.New("bad transport: " + route.Adapter)
+	//}
+	//conn, err := transport.Dial(route.Address, route.Options)
+	//if err != nil {
+	//	return nil, err
+	//}
+	tmplStr := "{{toJSON .}}\n"
 	if os.Getenv("RAW_FORMAT") != "" {
 		tmplStr = os.Getenv("RAW_FORMAT")
 	}
@@ -47,14 +46,14 @@ func NewRawAdapter(route *router.Route) (router.LogAdapter, error) {
 	}
 	return &Adapter{
 		route: route,
-		conn:  conn,
-		tmpl:  tmpl,
+		//conn:  conn,
+		tmpl: tmpl,
 	}, nil
 }
 
 // Adapter is a simple adapter that streams log output to a connection without any templating
 type Adapter struct {
-	conn  net.Conn
+	//conn  net.Conn
 	route *router.Route
 	tmpl  *template.Template
 }
@@ -68,12 +67,6 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 			log.Println("raw:", err)
 			return
 		}
-		_, err = a.conn.Write(buf.Bytes())
-		if err != nil {
-			log.Println("raw:", err)
-			if _, ok := a.conn.(*net.UDPConn); !ok {
-				return
-			}
-		}
+		fmt.Println("%s", buf.Bytes())
 	}
 }
