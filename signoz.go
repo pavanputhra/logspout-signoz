@@ -28,19 +28,12 @@ var funcs = template.FuncMap{
 
 // NewSignozAdapter returns a configured signoz.Adapter
 func NewSignozAdapter(route *router.Route) (router.LogAdapter, error) {
-	//transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("udp"))
-	//if !found {
-	//	return nil, errors.New("bad transport: " + route.Adapter)
-	//}
-	//conn, err := transport.Dial(route.Address, route.Options)
-	//if err != nil {
-	//	return nil, err
-	//}
+	fmt.Println("signoz 123 new adapter")
 	tmplStr := "{{toJSON .}}\n"
 	if os.Getenv("RAW_FORMAT") != "" {
 		tmplStr = os.Getenv("RAW_FORMAT")
 	}
-	tmpl, err := template.New("signoz").Funcs(funcs).Parse(tmplStr)
+	tmpl, err := template.New("tpl1").Funcs(funcs).Parse(tmplStr)
 	if err != nil {
 		return nil, err
 	}
