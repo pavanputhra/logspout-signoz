@@ -12,8 +12,7 @@ import (
 )
 
 func init() {
-	router.AdapterFactories.Register(NewSignozAdapter, "http")
-	router.AdapterFactories.Register(NewSignozAdapter, "https")
+	router.AdapterFactories.Register(NewSignozAdapter, "signoz")
 }
 
 var funcs = template.FuncMap{
