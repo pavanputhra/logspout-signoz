@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	router.AdapterFactories.Register(NewRawAdapter, "raw")
+	router.AdapterFactories.Register(NewRawAdapter, "signoz")
 }
 
 var funcs = template.FuncMap{
