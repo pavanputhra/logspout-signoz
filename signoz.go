@@ -12,7 +12,8 @@ import (
 )
 
 func init() {
-	router.AdapterFactories.Register(NewRawAdapter, "signoz")
+	router.AdapterFactories.Register(NewSignozAdapter, "http")
+	router.AdapterFactories.Register(NewSignozAdapter, "https")
 }
 
 var funcs = template.FuncMap{
@@ -26,8 +27,8 @@ var funcs = template.FuncMap{
 	},
 }
 
-// NewRawAdapter returns a configured raw.Adapter
-func NewRawAdapter(route *router.Route) (router.LogAdapter, error) {
+// NewSignozAdapter returns a configured signoz.Adapter
+func NewSignozAdapter(route *router.Route) (router.LogAdapter, error) {
 	//transport, found := router.AdapterTransports.Lookup(route.AdapterTransport("udp"))
 	//if !found {
 	//	return nil, errors.New("bad transport: " + route.Adapter)
@@ -40,7 +41,7 @@ func NewRawAdapter(route *router.Route) (router.LogAdapter, error) {
 	if os.Getenv("RAW_FORMAT") != "" {
 		tmplStr = os.Getenv("RAW_FORMAT")
 	}
-	tmpl, err := template.New("raw").Funcs(funcs).Parse(tmplStr)
+	tmpl, err := template.New("signoz").Funcs(funcs).Parse(tmplStr)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 		buf := new(bytes.Buffer)
 		err := a.tmpl.Execute(buf, message)
 		if err != nil {
-			log.Println("raw 123:", err)
+			log.Println("signoz 123:", err)
 			return
 		}
 		fmt.Println("%s", buf.Bytes())
