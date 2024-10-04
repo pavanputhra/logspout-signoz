@@ -1,0 +1,6 @@
+Dockerfile
+modules.go
+.env
+vendor/
+temp
+.idea
