@@ -64,7 +64,7 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 		buf := new(bytes.Buffer)
 		err := a.tmpl.Execute(buf, message)
 		if err != nil {
-			log.Println("raw:", err)
+			log.Println("raw 123:", err)
 			return
 		}
 		fmt.Println("%s", buf.Bytes())
