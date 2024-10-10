@@ -173,7 +173,9 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 				logMessage.SeverityNumber = leverNumber
 			}
 
-			logMessage.Message = jsonMap["message"].(string)
+			if jsonMap["message"] != nil {
+				logMessage.Message = jsonMap["message"].(string)
+			}
 
 			if jsonMap["env"] != nil {
 				logMessage.Resources["deployment.environment"] = jsonMap["env"].(string)
