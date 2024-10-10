@@ -1,8 +1,6 @@
-Dockerfile
-modules.go
 .env
 vendor/
 test
 .idea
-build.sh
+custom/build.sh
 node_modules
