@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/gliderlabs/logspout/router"
@@ -40,16 +39,16 @@ func init() {
 	router.AdapterFactories.Register(NewSignozAdapter, "signoz")
 }
 
-var funcs = template.FuncMap{
-	"toJSON": func(value interface{}) string {
-		bytes, err := json.Marshal(value)
-		if err != nil {
-			log.Println("error marshaling to JSON: ", err)
-			return "null"
-		}
-		return string(bytes)
-	},
-}
+//var funcs = template.FuncMap{
+//	"toJSON": func(value interface{}) string {
+//		bytes, err := json.Marshal(value)
+//		if err != nil {
+//			log.Println("error marshaling to JSON: ", err)
+//			return "null"
+//		}
+//		return string(bytes)
+//	},
+//}
 
 func parseJSON(s string) interface{} {
 	var result interface{} // This can hold any valid JSON structure
@@ -160,9 +159,11 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 		if jsonInterface != nil {
 			jsonMap := jsonInterface.(map[string]interface{})
 
-			timestamp, err := time.Parse(time.RFC3339, jsonMap["timestamp"].(string))
-			if err == nil {
-				logMessage.Timestamp = int(timestamp.Unix())
+			if jsonMap["timestamp"] != nil {
+				timestamp, err := time.Parse(time.RFC3339, jsonMap["timestamp"].(string))
+				if err == nil {
+					logMessage.Timestamp = int(timestamp.Unix())
+				}
 			}
 
 			if jsonMap["level"] != nil {

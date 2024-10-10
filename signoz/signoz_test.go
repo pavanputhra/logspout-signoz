@@ -88,6 +88,19 @@ func TestStream(t *testing.T) {
 
 	go adapter.Stream(logStream)
 
+	jsonWithoutTime := &router.Message{
+		Container: &docker.Container{
+			ID: "test",
+			Config: &docker.Config{
+				Labels: map[string]string{
+					"com.docker.compose.service": "serviceLabel",
+				},
+			},
+		},
+		Data: fmt.Sprintf(`{"level": "info", "message": "JSON message without time", "foo": "bar"}`),
+		Time: time.Now(),
+	}
+
 	jsonWithLabel := &router.Message{
 		Container: &docker.Container{
 			ID: "test",
@@ -151,6 +164,7 @@ func TestStream(t *testing.T) {
 	}
 
 	// Send a valid JSON log message
+	logStream <- jsonWithoutTime
 	logStream <- jsonWithoutLabel
 	logStream <- jsonWithLabel
 	logStream <- jsonWithEnv
