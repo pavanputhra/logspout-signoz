@@ -2,5 +2,4 @@
 vendor/
 test
 .idea
-custom/build.sh
 node_modules
