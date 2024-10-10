@@ -2,5 +2,7 @@ Dockerfile
 modules.go
 .env
 vendor/
-temp
+test
 .idea
+build.sh
+node_modules
