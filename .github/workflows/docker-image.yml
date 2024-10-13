@@ -29,6 +29,9 @@ jobs:
         id: vars
         run: echo "GIT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
 
+      - name: Get current date
+        run: echo "DATE=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -38,7 +41,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/logspout-signoz:latest
-            ${{ secrets.DOCKER_USERNAME }}/logspout-signoz:${{ env.GIT_SHA }}
+            ${{ secrets.DOCKER_USERNAME }}/logspout-signoz:${{ env.DATE }}-${{ env.GIT_SHA }}
 
       - name: Verify Docker image
         run: docker images ${{ secrets.DOCKER_USERNAME }}/my-app
