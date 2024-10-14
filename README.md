@@ -86,9 +86,11 @@ You can use the following environment variables to configure the adapter:
 Follow the instructions to build your own [logspout image](https://github.com/gliderlabs/logspout/tree/master/custom) including this module.
 In a nutshell, copy the contents of the `custom` folder and add the following import line above others in `modules.go`:
 ```go
+package main
+
 import (
   _ "github.com/pavanputhra/logspout-signoz/signoz"
-  ...
+  // ...
 )
 ```
 
