@@ -136,11 +136,11 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 
 		serviceName := message.Container.Config.Image
 		if serviceNameFromComposeLabel, exists := message.Container.Config.Labels["com.docker.compose.service"]; exists {
-			serviceName = serviceNameFromLabel
+			serviceName = serviceNameFromComposeLabel
 		}
-                if serviceNameFromSwarmLabel, exists := message.Container.Config.Labels["com.docker.swarm.task.name"]; exists {
-                        serviceName = swarmTaskName
-                }
+		if serviceNameFromSwarmLabel, exists := message.Container.Config.Labels["com.docker.swarm.task.name"]; exists {
+			serviceName = serviceNameFromSwarmLabel
+		}
 		logMessage = LogMessage{
 			Timestamp: int(message.Time.Unix()),
 			//TraceID:        "0", // replace with actual data
