@@ -104,7 +104,7 @@ type LogMessage struct {
 	Message        string            `json:"message"`
 }
 
-func (a *Adapter) Stream(logstream chan *router.Message) {
+func (a *Adapter) Stream(logStream chan *router.Message) {
 	var buffer []LogMessage
 	var mu sync.Mutex
 	ticker := time.NewTicker(5 * time.Second)
@@ -129,7 +129,7 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 	}()
 
 	var logMessage LogMessage
-	for message := range logstream {
+	for message := range logStream {
 
 		level := "info"
 		leverNumber := logLevelMap[strings.ToUpper(level)]
@@ -160,43 +160,43 @@ func (a *Adapter) Stream(logstream chan *router.Message) {
 
 		jsonInterface := parseJSON(message.Data)
 		if jsonInterface != nil {
-			jsonMap := jsonInterface.(map[string]interface{})
-
-			if jsonMap["timestamp"] != nil {
-				timestamp, err := time.Parse(time.RFC3339, jsonMap["timestamp"].(string))
-				if err == nil {
-					logMessage.Timestamp = int(timestamp.Unix())
+			if jsonMap, ok := jsonInterface.(map[string]interface{}); ok {
+				if jsonMap["timestamp"] != nil {
+					timestamp, err := time.Parse(time.RFC3339, jsonMap["timestamp"].(string))
+					if err == nil {
+						logMessage.Timestamp = int(timestamp.Unix())
+					}
 				}
-			}
 
-			if jsonMap["level"] != nil {
-				level = jsonMap["level"].(string)
-				leverNumber := logLevelMap[strings.ToUpper(level)]
-				logMessage.SeverityText = level
-				logMessage.SeverityNumber = leverNumber
-			}
+				if jsonMap["level"] != nil {
+					level = jsonMap["level"].(string)
+					leverNumber := logLevelMap[strings.ToUpper(level)]
+					logMessage.SeverityText = level
+					logMessage.SeverityNumber = leverNumber
+				}
 
-			if jsonMap["message"] != nil {
-				logMessage.Message = jsonMap["message"].(string)
-			}
+				if jsonMap["message"] != nil {
+					logMessage.Message = jsonMap["message"].(string)
+				}
 
-			if jsonMap["env"] != nil {
-				logMessage.Resources["deployment.environment"] = jsonMap["env"].(string)
-			}
-			if jsonMap["environment"] != nil {
-				logMessage.Resources["deployment.environment"] = jsonMap["environment"].(string)
-			}
+				if jsonMap["env"] != nil {
+					logMessage.Resources["deployment.environment"] = jsonMap["env"].(string)
+				}
+				if jsonMap["environment"] != nil {
+					logMessage.Resources["deployment.environment"] = jsonMap["environment"].(string)
+				}
 
-			if jsonMap["service"] != nil {
-				logMessage.Resources["service.name"] = jsonMap["service"].(string)
-			}
-			if jsonMap["namespace"] != nil {
-				logMessage.Resources["namespace"] = jsonMap["namespace"].(string)
-			}
-			// Get loop through non standard keys and save them as attributes inside logMessage
-			for key, value := range jsonMap {
-				if !contains(standardJsonAttributeKeys, key) {
-					logMessage.Attributes[key] = fmt.Sprintf("%v", value)
+				if jsonMap["service"] != nil {
+					logMessage.Resources["service.name"] = jsonMap["service"].(string)
+				}
+				if jsonMap["namespace"] != nil {
+					logMessage.Resources["namespace"] = jsonMap["namespace"].(string)
+				}
+				// Get loop through non standard keys and save them as attributes inside logMessage
+				for key, value := range jsonMap {
+					if !contains(standardJsonAttributeKeys, key) {
+						logMessage.Attributes[key] = fmt.Sprintf("%v", value)
+					}
 				}
 			}
 		} else {
