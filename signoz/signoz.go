@@ -155,9 +155,6 @@ func (a *Adapter) Stream(logStream chan *router.Message) {
 	var logMessage LogMessage
 	for message := range logStream {
 
-		// TODO: remove this after testing
-		fmt.Println("message source", message.Source)
-
 		// Apply filters
 		if !a.shouldProcessMessage(message) {
 			continue
