@@ -60,7 +60,6 @@ func parseJSON(s string) interface{} {
 
 // NewSignozAdapter returns a configured signoz.Adapter
 func NewSignozAdapter(route *router.Route) (router.LogAdapter, error) {
-
 	autoParseJson := true
 	if _, exists := os.LookupEnv("DISABLE_JSON_PARSE"); exists {
 		autoParseJson = false
@@ -75,11 +74,32 @@ func NewSignozAdapter(route *router.Route) (router.LogAdapter, error) {
 	if !exists {
 		envValue = ""
 	}
+
+	// Parse filter parameters from route.Address
+	filterName := route.Options["filter.name"]
+	filterID := route.Options["filter.id"]
+	filterSources := strings.Split(route.Options["filter.sources"], ",")
+	filterLabels := make(map[string]string)
+
+	if labelsStr := route.Options["filter.labels"]; labelsStr != "" {
+		labelPairs := strings.Split(labelsStr, ",")
+		for _, pair := range labelPairs {
+			parts := strings.Split(pair, ":")
+			if len(parts) == 2 {
+				filterLabels[parts[0]] = parts[1]
+			}
+		}
+	}
+
 	return &Adapter{
 		route:                   route,
 		autoParseJson:           autoParseJson,
 		autoLogLevelStringMatch: autoLogLevelStringMatch,
 		env:                     envValue,
+		filterName:              filterName,
+		filterID:                filterID,
+		filterSources:           filterSources,
+		filterLabels:            filterLabels,
 	}, nil
 }
 
@@ -90,6 +110,10 @@ type Adapter struct {
 	autoParseJson           bool
 	autoLogLevelStringMatch bool
 	env                     string
+	filterName              string
+	filterID                string
+	filterSources           []string
+	filterLabels            map[string]string
 }
 
 type LogMessage struct {
@@ -130,6 +154,14 @@ func (a *Adapter) Stream(logStream chan *router.Message) {
 
 	var logMessage LogMessage
 	for message := range logStream {
+
+		// TODO: remove this after testing
+		fmt.Println("message source", message.Source)
+
+		// Apply filters
+		if !a.shouldProcessMessage(message) {
+			continue
+		}
 
 		level := "info"
 		leverNumber := logLevelMap[strings.ToUpper(level)]
@@ -240,4 +272,58 @@ func sendLogs(logs []LogMessage) error {
 		return fmt.Errorf("failed to send logs, status: %s", resp.Status)
 	}
 	return nil
+}
+
+// shouldProcessMessage checks if a message should be processed based on filter criteria
+func (a *Adapter) shouldProcessMessage(message *router.Message) bool {
+	// Filter by container ID
+	if a.filterID != "" && message.Container.ID != a.filterID {
+		return false
+	}
+
+	// Filter by container name
+	if a.filterName != "" && !a.matchesFilterPattern(message.Container.Name, a.filterName) {
+		return false
+	}
+
+	// Filter by sources
+	if len(a.filterSources) > 0 && a.filterSources[0] != "" {
+		sourceFound := false
+		for _, source := range a.filterSources {
+			if message.Source == source {
+				sourceFound = true
+				break
+			}
+		}
+		if !sourceFound {
+			return false
+		}
+	}
+
+	// Filter by labels
+	if len(a.filterLabels) > 0 {
+		for labelKey, labelPattern := range a.filterLabels {
+			labelValue, exists := message.Container.Config.Labels[labelKey]
+			if !exists {
+				return false
+			}
+			if !a.matchesFilterPattern(labelValue, labelPattern) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// matchesFilterPattern checks if the container name matches the given pattern
+func (a *Adapter) matchesFilterPattern(input, filterPattern string) bool {
+	if strings.HasPrefix(filterPattern, "*") && strings.HasSuffix(filterPattern, "*") {
+		return strings.Contains(input, filterPattern[1:len(filterPattern)-1])
+	} else if strings.HasPrefix(filterPattern, "*") {
+		return strings.HasSuffix(input, filterPattern[1:])
+	} else if strings.HasSuffix(filterPattern, "*") {
+		return strings.HasPrefix(input, filterPattern[:len(filterPattern)-1])
+	}
+	return input == filterPattern
 }

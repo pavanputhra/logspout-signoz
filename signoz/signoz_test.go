@@ -243,3 +243,180 @@ func TestStream(t *testing.T) {
 	// Wait for a bit to allow the ticker to trigger and send logs
 	time.Sleep(8 * time.Second)
 }
+
+func TestContainerFiltering(t *testing.T) {
+	tests := []struct {
+		name          string
+		routeOptions  map[string]string
+		message       *router.Message
+		shouldProcess bool
+	}{
+		{
+			name: "Filter by container ID",
+			routeOptions: map[string]string{
+				"filter.id": "test-container-id",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					ID: "test-container-id",
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+		{
+			name: "Filter by container name with *foo pattern",
+			routeOptions: map[string]string{
+				"filter.name": "*_db",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Name: "postgres_db",
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+		{
+			name: "Filter by container name with foo* pattern",
+			routeOptions: map[string]string{
+				"filter.name": "test_*",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Name: "test_container",
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+		{
+			name: "Filter by container name with *foo pattern should reject non-matching",
+			routeOptions: map[string]string{
+				"filter.name": "*_db",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Name: "postgres_app",
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: false,
+		},
+		{
+			name: "Filter by container name with foo* pattern should reject non-matching",
+			routeOptions: map[string]string{
+				"filter.name": "test_*",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Name: "other_container",
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: false,
+		},
+		{
+			name: "Filter by container name with leading slash",
+			routeOptions: map[string]string{
+				"filter.name": "*_db",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Name: "/postgres_db",
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+		{
+			name: "Filter by sources",
+			routeOptions: map[string]string{
+				"filter.sources": "stdout,stderr",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Config: &docker.Config{
+						Labels: map[string]string{},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+		{
+			name: "Filter by labels",
+			routeOptions: map[string]string{
+				"filter.labels": "app:test_*,env:prod",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Config: &docker.Config{
+						Labels: map[string]string{
+							"app": "test_app",
+							"env": "prod",
+						},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+		{
+			name: "Multiple filters",
+			routeOptions: map[string]string{
+				"filter.name":    "test_*",
+				"filter.sources": "stdout",
+				"filter.labels":  "app:test_*",
+			},
+			message: &router.Message{
+				Container: &docker.Container{
+					Name: "test_container",
+					Config: &docker.Config{
+						Labels: map[string]string{
+							"app": "test_app",
+						},
+					},
+				},
+				Source: "stdout",
+			},
+			shouldProcess: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := &router.Route{
+				Options: tt.routeOptions,
+			}
+
+			adapter, err := NewSignozAdapter(route)
+			if err != nil {
+				t.Fatalf("NewSignozAdapter() error = %v", err)
+			}
+
+			shouldProcess := adapter.(*Adapter).shouldProcessMessage(tt.message)
+			if shouldProcess != tt.shouldProcess {
+				t.Errorf("shouldProcessMessage() = %v, want %v", shouldProcess, tt.shouldProcess)
+			}
+		})
+	}
+}
