@@ -103,7 +103,7 @@ ONBUILD COPY ./build.sh /src/build.sh
 ONBUILD COPY ./modules.go /src/modules.go
 ```
 
-Then build your image with: `docker build --no-cache --pull --force-rm --build-arg VERSION=v3.2.11 -f dockerfile -t logspout:v3.2.11 .`
+Then build your image with: `docker build --no-cache --pull --force-rm --build-arg VERSION=v3.2.14 -f dockerfile -t logspout:v3.2.14 .`
 
 
 ## Logspout configuration options
