@@ -44,4 +44,4 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/logspout-signoz:${{ env.DATE }}-${{ env.GIT_SHA }}
 
       - name: Verify Docker image
-        run: docker images ${{ secrets.DOCKER_USERNAME }}/my-app
+        run: docker images ${{ secrets.DOCKER_USERNAME }}/logspout-signoz
