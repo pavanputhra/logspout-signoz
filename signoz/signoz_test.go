@@ -101,6 +101,12 @@ func TestStream(t *testing.T) {
 			return
 		}
 
+		expectedLogs := 7
+		if len(receivedLogs) != expectedLogs {
+			t.Errorf("Expected to receive %d logs, got %d", expectedLogs, len(receivedLogs))
+			return
+		}
+
 		logMessage1 := receivedLogs[0]
 		if logMessage1.Timestamp <= 0 {
 			t.Errorf("Expected timestamp: > 0, got: %d", logMessage1.Timestamp)
@@ -230,6 +236,19 @@ func TestStream(t *testing.T) {
 		Time: time.Now(),
 	}
 
+	// Add a test message that should crash the adapter due to non-string "level"
+	jsonLogWithIntLevel := &router.Message{
+		Container: &docker.Container{
+			ID: "test",
+			Config: &docker.Config{
+				Image:  "serviceImage",
+				Labels: map[string]string{},
+			},
+		},
+		Data: `{"level":40,"time":"2025-04-20T20:40:16.188Z","pid":1}`,
+		Time: time.Now(),
+	}
+
 	// Send a valid JSON log message
 	logStream <- jsonWithoutTime
 	logStream <- jsonWithoutLabel
@@ -237,6 +256,7 @@ func TestStream(t *testing.T) {
 	logStream <- jsonWithEnv
 	logStream <- messageWithLabel
 	logStream <- messageWithoutLabel
+	logStream <- jsonLogWithIntLevel
 
 	close(logStream)
 

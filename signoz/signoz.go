@@ -191,35 +191,49 @@ func (a *Adapter) Stream(logStream chan *router.Message) {
 		if jsonInterface != nil {
 			if jsonMap, ok := jsonInterface.(map[string]interface{}); ok {
 				if jsonMap["timestamp"] != nil {
-					timestamp, err := time.Parse(time.RFC3339, jsonMap["timestamp"].(string))
-					if err == nil {
-						logMessage.Timestamp = int(timestamp.Unix())
+					if timestampStr, ok := jsonMap["timestamp"].(string); ok {
+						timestamp, err := time.Parse(time.RFC3339, timestampStr)
+						if err == nil {
+							logMessage.Timestamp = int(timestamp.Unix())
+						}
 					}
 				}
 
 				if jsonMap["level"] != nil {
-					level = jsonMap["level"].(string)
-					leverNumber := logLevelMap[strings.ToUpper(level)]
-					logMessage.SeverityText = level
-					logMessage.SeverityNumber = leverNumber
+					if levelStr, ok := jsonMap["level"].(string); ok {
+						level = levelStr
+						leverNumber := logLevelMap[strings.ToUpper(level)]
+						logMessage.SeverityText = level
+						logMessage.SeverityNumber = leverNumber
+					}
 				}
 
 				if jsonMap["message"] != nil {
-					logMessage.Message = jsonMap["message"].(string)
+					if messageStr, ok := jsonMap["message"].(string); ok {
+						logMessage.Message = messageStr
+					}
 				}
 
 				if jsonMap["env"] != nil {
-					logMessage.Resources["deployment.environment"] = jsonMap["env"].(string)
+					if envStr, ok := jsonMap["env"].(string); ok {
+						logMessage.Resources["deployment.environment"] = envStr
+					}
 				}
 				if jsonMap["environment"] != nil {
-					logMessage.Resources["deployment.environment"] = jsonMap["environment"].(string)
+					if envStr, ok := jsonMap["environment"].(string); ok {
+						logMessage.Resources["deployment.environment"] = envStr
+					}
 				}
 
 				if jsonMap["service"] != nil {
-					logMessage.Resources["service.name"] = jsonMap["service"].(string)
+					if serviceStr, ok := jsonMap["service"].(string); ok {
+						logMessage.Resources["service.name"] = serviceStr
+					}
 				}
 				if jsonMap["namespace"] != nil {
-					logMessage.Resources["namespace"] = jsonMap["namespace"].(string)
+					if namespaceStr, ok := jsonMap["namespace"].(string); ok {
+						logMessage.Resources["namespace"] = namespaceStr
+					}
 				}
 				// Get loop through non standard keys and save them as attributes inside logMessage
 				for key, value := range jsonMap {
