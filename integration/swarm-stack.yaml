@@ -1,0 +1,12 @@
+services:
+  api:
+    image: alpine:latest
+    # Top-level labels become CONTAINER labels, which is what logspout matches.
+    labels:
+      logtest: "yes"
+    command:
+      - sh
+      - -c
+      - 'while true; do echo "{\"level\":\"info\",\"msg\":\"swarm task log\",\"replica\":\"$HOSTNAME\"}"; sleep 2; done'
+    deploy:
+      replicas: 2

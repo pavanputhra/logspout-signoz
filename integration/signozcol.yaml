@@ -1,0 +1,26 @@
+receivers:
+  httplogreceiver/json:
+    endpoint: 0.0.0.0:8082
+    source: json
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  file/httplog:
+    path: /out/signoz-received.json
+  file/otlp:
+    path: /out/signoz-otlp-received.json
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    logs:
+      receivers: [httplogreceiver/json]
+      exporters: [file/httplog]
+    logs/otlp:
+      receivers: [otlp]
+      exporters: [file/otlp]

@@ -1,0 +1,18 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  file:
+    path: /out/otlp-received.json
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [file]

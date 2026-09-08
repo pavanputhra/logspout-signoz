@@ -1,0 +1,44 @@
+# Trimmed stack for CI: OTLP against the official OpenTelemetry collector.
+#
+# The SigNoz collector and the Swarm checks live in docker-compose.yaml and are
+# run by hand before a release. Keeping CI to one official image means a red
+# build points at this repository, not at someone else's registry.
+services:
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otelcol.yaml:/etc/otelcol/config.yaml:ro
+      - ./out:/out
+
+  logspout-otlp:
+    image: logspout-signoz:itest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["otlp://otelcol:4318?env=itest&flush_interval=1s&filter.labels=logtest:yes"]
+    depends_on:
+      otelcol: {condition: service_started}
+      producer: {condition: service_healthy}
+      ignored: {condition: service_healthy}
+
+  producer:
+    image: alpine:3.20
+    labels:
+      logtest: "yes"
+    volumes:
+      - ./produce.sh:/produce.sh:ro
+    command: ["sh", "/produce.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  ignored:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do echo 'MUST-NOT-BE-COLLECTED unlabelled container'; touch /tmp/ready; sleep 10; done"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
