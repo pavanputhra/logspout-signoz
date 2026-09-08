@@ -208,6 +208,25 @@ logspout with `EXCLUDE_LABEL=<label>` and put that label on the container.
 The adapter's own container is not excluded automatically, so if you want to
 keep its startup messages out of SigNoz, set `LOGSPOUT=ignore` on it.
 
+### Start logspout after your containers
+
+logspout can permanently stop following a container that starts in the same
+instant it does: its pump inspects the container, sees it is not yet running,
+and marks it dead. Nothing is logged, and the container's logs simply never
+arrive.
+
+With `docker compose up` bringing everything up at once, use `depends_on` so
+the adapter starts last, or restart it if a container is missing from SigNoz:
+
+```yaml
+  logspout-signoz:
+    depends_on:
+      - your-app
+```
+
+This is upstream logspout behaviour, not specific to this adapter, and it is
+worth checking first when one container's logs are missing while others arrive.
+
 ### Several destinations
 
 Because the destination comes from the route, one logspout can serve more than

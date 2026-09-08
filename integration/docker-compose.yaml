@@ -1,0 +1,68 @@
+services:
+  # Collector images are pinned: a new upstream release should be an
+  # intentional bump, not a surprise red build.
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otelcol.yaml:/etc/otelcol/config.yaml:ro
+      - ./out:/out
+
+  signozcol:
+    image: signoz/signoz-otel-collector:0.111.24
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./signozcol.yaml:/etc/otelcol/config.yaml:ro
+      - ./out:/out
+
+  logspout-otlp:
+    image: logspout-signoz:itest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["otlp://otelcol:4318?env=itest&flush_interval=1s&filter.labels=logtest:yes"]
+    depends_on:
+      otelcol: {condition: service_started}
+      producer: {condition: service_healthy}
+      ignored: {condition: service_healthy}
+
+  logspout-signoz:
+    image: logspout-signoz:itest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["signoz://signozcol:8082?env=itest&flush_interval=1s&filter.labels=logtest:yes"]
+    depends_on:
+      signozcol: {condition: service_started}
+      producer: {condition: service_healthy}
+      ignored: {condition: service_healthy}
+
+  logspout-otlp-signoz:
+    image: logspout-signoz:itest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["otlp://signozcol:4318?env=itest&flush_interval=1s&filter.labels=logtest:yes"]
+    depends_on:
+      signozcol: {condition: service_started}
+      producer: {condition: service_healthy}
+      ignored: {condition: service_healthy}
+
+  producer:
+    image: alpine:latest
+    labels:
+      logtest: "yes"
+    volumes:
+      - ./produce.sh:/produce.sh:ro
+    command: ["sh", "/produce.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  ignored:
+    image: alpine:latest
+    command: ["sh", "-c", "while true; do echo 'MUST-NOT-BE-COLLECTED unlabelled container'; touch /tmp/ready; sleep 10; done"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 20

@@ -1,6 +1,6 @@
 .env
 vendor/
-test
+/test/
 .idea
 .vscode
 node_modules
