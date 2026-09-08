@@ -15,6 +15,16 @@ REPOSITORY = "pavanputhra/logspout-signoz"
 MAX_DESCRIPTION = 25000
 
 
+SCOPE_HELP = """
+The token authenticated but is not allowed to edit repository metadata.
+
+A token used only for `docker push` does not carry that permission. Create one
+at https://app.docker.com/settings/personal-access-tokens with the "Read, Write,
+Delete" scope and store it as the DOCKER_PASSWORD secret (or run
+scripts/sync-dockerhub-description.py by hand after changing the README).
+"""
+
+
 def post(url: str, payload: dict, headers: dict, method: str = "POST") -> dict:
     request = urllib.request.Request(
         url, data=json.dumps(payload).encode(),
@@ -23,6 +33,8 @@ def post(url: str, payload: dict, headers: dict, method: str = "POST") -> dict:
         return json.loads(urllib.request.urlopen(request).read() or b"{}")
     except urllib.error.HTTPError as error:
         detail = error.read()[:300].decode(errors="replace")
+        if error.code in (401, 403):
+            sys.exit(f"{method} {url} failed: {error.code} {detail}\n{SCOPE_HELP}")
         sys.exit(f"{method} {url} failed: {error.code} {detail}")
 
 
