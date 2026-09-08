@@ -15,6 +15,7 @@ func testClient(t *testing.T, url string, retries int) *client {
 		endpoint:   url,
 		retryCount: retries,
 		backoff:    time.Millisecond,
+		codec:      signozCodec{},
 		http:       &http.Client{Timeout: 5 * time.Second},
 	}
 }

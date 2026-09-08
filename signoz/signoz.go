@@ -26,8 +26,13 @@ func init() {
 	router.AdapterFactories.Register(NewSignozAdapter, "signoz")
 }
 
-// Adapter streams logspout messages to SigNoz.
+// Version identifies this adapter to collectors that record an instrumentation
+// scope.
+const Version = "2.1.0"
+
+// Adapter streams logspout messages to a log collector.
 type Adapter struct {
+	name   string
 	route  *router.Route
 	cfg    *Config
 	client *client
@@ -38,17 +43,24 @@ type Adapter struct {
 	dropOnce sync.Once
 }
 
-// NewSignozAdapter returns a configured signoz.Adapter.
+// NewSignozAdapter returns an adapter that posts to SigNoz's httplogreceiver.
 func NewSignozAdapter(route *router.Route) (router.LogAdapter, error) {
-	cfg, err := NewConfig(route)
+	return newAdapter(route, "signoz", signozCodec{}, signozDefaultPath)
+}
+
+// newAdapter builds an adapter for one protocol. Everything except the wire
+// format and the default path is shared.
+func newAdapter(route *router.Route, name string, wire codec, defaultPath string) (router.LogAdapter, error) {
+	cfg, err := NewConfig(route, defaultPath)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("signoz: routing to %s (batch %d, flush %s)", cfg.Endpoint, cfg.BatchSize, cfg.FlushInterval)
+	log.Printf("%s: routing to %s (batch %d, flush %s)", name, cfg.Endpoint, cfg.BatchSize, cfg.FlushInterval)
 	return &Adapter{
+		name:   name,
 		route:  route,
 		cfg:    cfg,
-		client: newClient(cfg),
+		client: newClient(cfg, wire),
 		// Bounded: at most MaxBuffer records may be waiting to be sent, so a
 		// collector outage costs a known amount of memory instead of growing
 		// until the container is OOM-killed.
@@ -122,8 +134,8 @@ func (a *Adapter) enqueue(batch []LogRecord) {
 	case old := <-a.queue:
 		a.dropped += len(old)
 		a.dropOnce.Do(func() {
-			log.Printf("signoz: sender is behind, dropping oldest logs "+
-				"(max_buffer=%d); further drops are logged only with DEBUG set", a.cfg.MaxBuffer)
+			log.Printf("%s: sender is behind, dropping oldest logs "+
+				"(max_buffer=%d); further drops are logged only with DEBUG set", a.name, a.cfg.MaxBuffer)
 		})
 		debug("dropped", len(old), "records; total dropped", a.dropped)
 	default:
@@ -146,7 +158,7 @@ func (a *Adapter) sendLoop() {
 			// Errors go through log.Println, never fmt.Println, and carry no
 			// per-flush chatter: logspout collects its own container's stdout,
 			// so anything printed here comes back around as a log line.
-			log.Printf("signoz: dropping %d records: %v", len(batch), err)
+			log.Printf("%s: dropping %d records: %v", a.name, len(batch), err)
 		}
 		cancel()
 	}

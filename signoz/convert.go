@@ -23,6 +23,11 @@ type LogRecord struct {
 	Attributes     map[string]interface{} `json:"attributes,omitempty"`
 	Resources      map[string]interface{} `json:"resources,omitempty"`
 	Body           string                 `json:"body"`
+
+	// When logspout read the line, as opposed to Timestamp, which a structured
+	// log may override with its own. OTLP carries both; SigNoz's JSON receiver
+	// has no field for it, hence the "-" tag.
+	Observed int64 `json:"-"`
 }
 
 // OpenTelemetry severity numbers.
@@ -101,6 +106,7 @@ func (a *Adapter) convert(m *router.Message) LogRecord {
 		// by digit count so they were accepted, but every log inside the same
 		// second collapsed onto one timestamp and lost its ordering.
 		Timestamp:      m.Time.UnixNano(),
+		Observed:       m.Time.UnixNano(),
 		SeverityText:   "info",
 		SeverityNumber: sevInfo,
 		Body:           m.Data,

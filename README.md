@@ -4,7 +4,8 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/pavanputhra/logspout-signoz)](https://hub.docker.com/r/pavanputhra/logspout-signoz)
 
 A [logspout](https://github.com/gliderlabs/logspout) adapter that ships Docker
-container logs to [SigNoz](https://signoz.io/) over HTTP.
+container logs to [SigNoz](https://signoz.io/) — over OTLP, or over SigNoz's own
+HTTP log endpoint.
 
 **Use `pavanputhra/logspout-signoz:v2`.**
 
@@ -20,7 +21,7 @@ container logs to [SigNoz](https://signoz.io/) over HTTP.
 |---|---|
 | `v2` | Latest v2.x. **Recommended** — picks up fixes, never a breaking change. |
 | `v2.0.0` | An exact release, for reproducible deployments. |
-| `latest` | Whatever the newest release is. Will move to v3 when that lands. |
+| `latest` | Whatever the newest release is. Moves across major versions. |
 | `edge` | Built from `main`. Untagged and unstable; for trying fixes early. |
 | `v1` | Frozen final v1 build. Only if you cannot upgrade yet. |
 
@@ -35,9 +36,34 @@ container logs to [SigNoz](https://signoz.io/) over HTTP.
 - Detects log levels in plain-text logs.
 - Carries `trace_id`/`span_id` through, so logs link to traces in SigNoz.
 
+## Which protocol
+
+Two route schemes, both supported indefinitely. Pick one:
+
+| | `otlp://` | `signoz://` |
+|---|---|---|
+| Collector setup | **none** — OTLP is on by default (port 4318) | add `httplogreceiver/json`, expose 8082 |
+| Works with | any OpenTelemetry collector | SigNoz only |
+| Attribute fidelity | full — integers, nested objects, arrays | numbers become floats, nested values become strings |
+
+**New installs should use `otlp://`.** It needs no collector configuration and
+keeps log attributes intact. `signoz://` remains fully supported for existing
+deployments and is unchanged.
+
+The fidelity difference is in SigNoz's `httplogreceiver`, not in this adapter:
+it decodes every JSON number as a float (so a 19-digit id loses precision) and
+serialises nested objects to strings. OTLP carries them exactly.
+
+```bash
+otlp://otel-collector:4318?env=prod        # recommended
+signoz://otel-collector:8082?env=prod      # needs the receiver configured below
+```
+
 ## Quick start
 
 ### 1. Enable the HTTP log receiver in SigNoz
+
+**Only needed for `signoz://` routes.** Skip this entirely if you use `otlp://`.
 
 Self-hosted only; skip this for SigNoz Cloud. In `otel-collector-config.yaml`:
 
@@ -76,8 +102,11 @@ docker run -d \
   --volume=/etc/hostname:/etc/host_hostname:ro \
   --restart=always \
   pavanputhra/logspout-signoz:v2 \
-  'signoz://otel-collector:8082?env=prod'
+  'otlp://otel-collector:4318?env=prod'
 ```
+
+Swap the scheme for `signoz://otel-collector:8082?env=prod` to use SigNoz's HTTP
+log endpoint instead.
 
 The **route URI is the configuration**: the address is where logs go, and the
 query string sets everything else.
@@ -92,6 +121,13 @@ docker run -d \
   --volume=/var/run/docker.sock:/var/run/docker.sock \
   -e SIGNOZ_INGESTION_KEY=<your-key> \
   pavanputhra/logspout-signoz:v2 \
+  'otlp+https://ingest.us.signoz.cloud:443?env=prod'
+```
+
+`otlp://` already defaults to the `/v1/logs` path that OTLP mandates, so it needs
+no `path` option. For the HTTP log endpoint instead:
+
+```bash
   'signoz+https://ingest.us.signoz.cloud:443?path=/logs/json&env=prod'
 ```
 
@@ -108,10 +144,24 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/hostname:/etc/host_hostname:ro
-    command: 'signoz://otel-collector:8082?env=prod'
+    # Note the list form. See the warning below.
+    command: ["otlp://otel-collector:4318?env=prod&filter.labels=logging:signoz"]
     depends_on:
       - otel-collector
 ```
+
+> **Write `command` as a list, not a string.** Compose parses a string `command`
+> with shell-like splitting, so it truncates the route at the first `&`:
+>
+> ```yaml
+> command: 'otlp://otel-collector:4318?env=prod&filter.labels=logging:signoz'
+> ```
+>
+> reaches the container as `otlp://otel-collector:4318?env=prod` — everything
+> after the first `&` is silently dropped, so filters and tuning options never
+> take effect. Nothing errors; the options simply are not there. The startup
+> banner prints the route it actually parsed, which is the quickest way to
+> confirm what took effect.
 
 ## Configuration
 
@@ -121,7 +171,7 @@ logspout process feed several destinations.
 
 | Option (URI) | Environment variable | Default | Description |
 |---|---|---|---|
-| `path` | `SIGNOZ_PATH` | `/` | Request path. SigNoz Cloud needs `/logs/json`. |
+| `path` | `SIGNOZ_PATH` | `/v1/logs` for `otlp://`, `/` for `signoz://` | Request path. Rarely needed: each scheme already defaults to the right one. |
 | `ingestion_key` | `SIGNOZ_INGESTION_KEY` | — | Sent as the `signoz-ingestion-key` header (SigNoz Cloud). |
 | `env` | `SIGNOZ_ENV` | — | Sets the `deployment.environment` resource. |
 | `service_name` | `SIGNOZ_SERVICE_NAME` | auto | Forces `service.name` instead of detecting it. |
@@ -161,12 +211,13 @@ keep its startup messages out of SigNoz, set `LOGSPOUT=ignore` on it.
 ### Several destinations
 
 Because the destination comes from the route, one logspout can serve more than
-one. Separate routes with commas:
+one — including a mix of protocols, which is a low-risk way to compare `otlp://`
+against `signoz://` before switching. Separate routes with commas:
 
 ```bash
 docker run -d --volume=/var/run/docker.sock:/var/run/docker.sock \
   pavanputhra/logspout-signoz:v2 \
-  'signoz://collector-a:8082?filter.name=team-a-*,signoz://collector-b:8082?filter.name=team-b-*'
+  'otlp://collector-a:4318?filter.name=team-a-*,otlp://collector-b:4318?filter.name=team-b-*'
 ```
 
 ### Multi-line logs
@@ -175,6 +226,7 @@ Stack traces arrive one line at a time. Chain logspout's `multiline` adapter,
 which is built into the image:
 
 ```bash
+'multiline+otlp://otel-collector:4318?env=prod'
 'multiline+signoz://otel-collector:8082?env=prod'
 ```
 
