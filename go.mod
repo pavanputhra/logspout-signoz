@@ -1,8 +1,11 @@
-module github.com/pavanputhra/logspout-signoz
+module github.com/pavanputhra/logspout-signoz/v2
 
 go 1.22.5
 
-require github.com/gliderlabs/logspout v3.2.6+incompatible
+// logspout v3.2.7+ ship a go.mod whose module path lacks the required /v3
+// suffix, so those tags cannot be resolved by name. This pseudo-version is the
+// v3.2.14 commit, which is what the Docker image builds against.
+require github.com/gliderlabs/logspout v0.0.0-20211203211836-2c3241931087 // v3.2.14
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
@@ -10,6 +13,7 @@ require (
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e // indirect
+	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/moby/sys/mount v0.2.0 // indirect
 	github.com/moby/sys/mountinfo v0.4.0 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
