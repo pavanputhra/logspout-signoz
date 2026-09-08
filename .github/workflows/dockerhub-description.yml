@@ -1,0 +1,26 @@
+name: Docker Hub description
+
+# The overview goes stale when the README changes, not when a release is cut,
+# so it syncs on README changes and on demand rather than riding on a tag.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'README.md'
+      - 'scripts/dockerhub-description.py'
+      - 'scripts/sync-dockerhub-description.py'
+      - '.github/workflows/dockerhub-description.yml'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync the Docker Hub overview
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: python3 scripts/sync-dockerhub-description.py
