@@ -18,16 +18,28 @@ const (
 	maxBackoff     = 30 * time.Second
 )
 
-// client posts batches of log records to a SigNoz log endpoint.
+// codec is the wire format a client speaks. The HTTP machinery — timeouts,
+// retries, backoff, auth — is shared; only encoding and the notion of a
+// successful response differ between SigNoz's JSON receiver and OTLP.
+type codec interface {
+	contentType() string
+	encode(records []LogRecord) ([]byte, error)
+	// inspect reports a logical failure behind a 2xx response, such as OTLP
+	// returning partialSuccess with rejected records.
+	inspect(body []byte) error
+}
+
+// client posts batches of log records to a log endpoint.
 type client struct {
 	endpoint     string
 	ingestionKey string
 	retryCount   int
 	backoff      time.Duration
+	codec        codec
 	http         *http.Client
 }
 
-func newClient(cfg *Config) *client {
+func newClient(cfg *Config, wire codec) *client {
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -48,6 +60,7 @@ func newClient(cfg *Config) *client {
 		ingestionKey: cfg.IngestionKey,
 		retryCount:   cfg.RetryCount,
 		backoff:      initialBackoff,
+		codec:        wire,
 		// v1 used http.Post, i.e. http.DefaultClient, which has no timeout at
 		// all: one unreachable collector blocked the sender forever while the
 		// buffer grew without bound.
@@ -55,12 +68,22 @@ func newClient(cfg *Config) *client {
 	}
 }
 
+// signozCodec is the payload SigNoz's httplogreceiver (source: json) accepts:
+// a flat array of log records.
+type signozCodec struct{}
+
+func (signozCodec) contentType() string { return "application/json" }
+
+func (signozCodec) encode(records []LogRecord) ([]byte, error) { return json.Marshal(records) }
+
+func (signozCodec) inspect([]byte) error { return nil }
+
 // send delivers a batch, retrying transient failures with exponential backoff.
 func (c *client) send(ctx context.Context, records []LogRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
-	payload, err := json.Marshal(records)
+	payload, err := c.codec.encode(records)
 	if err != nil {
 		return fmt.Errorf("encoding %d records: %w", len(records), err)
 	}
@@ -102,7 +125,7 @@ func (c *client) post(ctx context.Context, payload []byte) (retryable bool, err 
 	if err != nil {
 		return false, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", c.codec.contentType())
 	if c.ingestionKey != "" {
 		req.Header.Set("signoz-ingestion-key", c.ingestionKey)
 	}
@@ -117,13 +140,16 @@ func (c *client) post(ctx context.Context, payload []byte) (retryable bool, err 
 		resp.Body.Close()
 	}()
 
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return false, nil
+		// A 2xx is not necessarily a full success: OTLP reports rejected
+		// records in the response body.
+		return false, c.codec.inspect(body)
 	case resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode >= 500:
-		return true, fmt.Errorf("signoz returned %s", resp.Status)
+		return true, fmt.Errorf("collector returned %s", resp.Status)
 	default:
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return false, fmt.Errorf("signoz rejected the batch with %s: %s", resp.Status, bytes.TrimSpace(body))
+		return false, fmt.Errorf("collector rejected the batch with %s: %s", resp.Status, bytes.TrimSpace(body))
 	}
 }

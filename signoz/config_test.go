@@ -32,7 +32,7 @@ func route(address string, options map[string]string) *router.Route {
 // The central v1 defect: the route address was ignored in favour of an env var.
 func TestEndpointComesFromRouteAddress(t *testing.T) {
 	clearLegacyEnv(t)
-	cfg, err := NewConfig(route("otel-collector:8082", nil))
+	cfg, err := NewConfig(route("otel-collector:8082", nil), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestEndpointHTTPSTransportAndPath(t *testing.T) {
 	r := route("ingest.us.signoz.cloud:443", map[string]string{"path": "/logs/json"})
 	r.Adapter = "signoz+https"
 
-	cfg, err := NewConfig(r)
+	cfg, err := NewConfig(r, signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -59,14 +59,14 @@ func TestEndpointRejectsUnknownTransport(t *testing.T) {
 	clearLegacyEnv(t)
 	r := route("host:8082", nil)
 	r.Adapter = "signoz+udp"
-	if _, err := NewConfig(r); err == nil {
+	if _, err := NewConfig(r, signozDefaultPath); err == nil {
 		t.Fatal("expected an error for signoz+udp")
 	}
 }
 
 func TestEndpointRequiresADestination(t *testing.T) {
 	clearLegacyEnv(t)
-	if _, err := NewConfig(route("", nil)); err == nil {
+	if _, err := NewConfig(route("", nil), signozDefaultPath); err == nil {
 		t.Fatal("expected an error when no address and no legacy env var are set")
 	}
 }
@@ -78,7 +78,7 @@ func TestLegacyEndpointEnvStillWins(t *testing.T) {
 	clearLegacyEnv(t)
 	t.Setenv("SIGNOZ_LOG_ENDPOINT", "http://1.2.3.4:8082")
 
-	cfg, err := NewConfig(route("localhost:8082", nil))
+	cfg, err := NewConfig(route("localhost:8082", nil), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestLegacyEnvVarStillSetsEnvironment(t *testing.T) {
 	clearLegacyEnv(t)
 	t.Setenv("ENV", "prod")
 
-	cfg, err := NewConfig(route("host:8082", nil))
+	cfg, err := NewConfig(route("host:8082", nil), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestRouteOptionBeatsEnvVar(t *testing.T) {
 	clearLegacyEnv(t)
 	t.Setenv("SIGNOZ_ENV", "from-env")
 
-	cfg, err := NewConfig(route("host:8082", map[string]string{"env": "from-route"}))
+	cfg, err := NewConfig(route("host:8082", map[string]string{"env": "from-route"}), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestRouteOptionBeatsEnvVar(t *testing.T) {
 
 func TestDefaults(t *testing.T) {
 	clearLegacyEnv(t)
-	cfg, err := NewConfig(route("host:8082", nil))
+	cfg, err := NewConfig(route("host:8082", nil), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestTuningOptions(t *testing.T) {
 		"timeout":        "2s",
 		"retry_count":    "1",
 		"parse_json":     "false",
-	}))
+	}), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestInvalidOptionsAreRejected(t *testing.T) {
 		"buffer below batch":     {"batch_size": "100", "max_buffer": "10"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewConfig(route("host:8082", options)); err == nil {
+			if _, err := NewConfig(route("host:8082", options), signozDefaultPath); err == nil {
 				t.Errorf("expected an error for %v", options)
 			}
 		})
@@ -179,7 +179,7 @@ func TestLegacyDisableJSONParseStaysInert(t *testing.T) {
 	clearLegacyEnv(t)
 	t.Setenv("DISABLE_JSON_PARSE", "true")
 
-	cfg, err := NewConfig(route("host:8082", nil))
+	cfg, err := NewConfig(route("host:8082", nil), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestLegacyDisableLevelMatchIsHonoured(t *testing.T) {
 	clearLegacyEnv(t)
 	t.Setenv("DISABLE_LOG_LEVEL_STRING_MATCH", "true")
 
-	cfg, err := NewConfig(route("host:8082", nil))
+	cfg, err := NewConfig(route("host:8082", nil), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestRouteURIWiring(t *testing.T) {
 	// closer channel that only a running route reads, so it would deadlock
 	// here. The route is inert in a test binary.
 
-	cfg, err := NewConfig(got)
+	cfg, err := NewConfig(got, signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestRouteURIWiring(t *testing.T) {
 
 func TestHostNameFromMountedFile(t *testing.T) {
 	clearLegacyEnv(t)
-	cfg, err := NewConfig(route("host:8082", map[string]string{"host_name": "node-1"}))
+	cfg, err := NewConfig(route("host:8082", map[string]string{"host_name": "node-1"}), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestHostNameFromMountedFile(t *testing.T) {
 
 func TestEndpointNormalisesPathWithoutLeadingSlash(t *testing.T) {
 	clearLegacyEnv(t)
-	cfg, err := NewConfig(route("host:8082", map[string]string{"path": "logs/json"}))
+	cfg, err := NewConfig(route("host:8082", map[string]string{"path": "logs/json"}), signozDefaultPath)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}

@@ -36,7 +36,11 @@ type Config struct {
 }
 
 const (
-	defaultPath          = "/"
+	// Each protocol has its own endpoint path: SigNoz's httplogreceiver listens
+	// at the root, OTLP/HTTP fixes /v1/logs by specification.
+	signozDefaultPath = "/"
+	otlpDefaultPath   = "/v1/logs"
+
 	defaultBatchSize     = 100
 	defaultFlushInterval = 5 * time.Second
 	defaultMaxBuffer     = 10000
@@ -53,11 +57,16 @@ const (
 var deprecationOnce sync.Map
 
 // deprecated warns once per process for each legacy setting still in use.
+//
+// The warning names a better way rather than a removal date. These settings are
+// supported indefinitely: dropping them would break every v1 deployment to save
+// a dozen lines, so promising their removal would only pressure people to
+// migrate against a deadline that is never coming.
 func deprecated(old, replacement string) {
 	if _, seen := deprecationOnce.LoadOrStore(old, true); seen {
 		return
 	}
-	log.Printf("signoz: %s is deprecated and will be removed in v3; use %s", old, replacement)
+	log.Printf("signoz: %s still works, but %s is preferred", old, replacement)
 }
 
 // debug logs only when DEBUG is set, matching logspout's own convention.
@@ -126,9 +135,10 @@ func durationOption(route *router.Route, name, envName string, dfault time.Durat
 	return v, nil
 }
 
-// NewConfig builds a Config from a route plus the environment.
-func NewConfig(route *router.Route) (*Config, error) {
-	endpoint, err := resolveEndpoint(route)
+// NewConfig builds a Config from a route plus the environment. defaultPath is
+// the adapter's protocol-mandated path, used when the route does not set one.
+func NewConfig(route *router.Route, defaultPath string) (*Config, error) {
+	endpoint, err := resolveEndpoint(route, defaultPath)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +207,7 @@ func NewConfig(route *router.Route) (*Config, error) {
 //
 // logspout's AddFromURI keeps only u.Host, discarding any path, so the path has
 // to arrive as an option: `?path=/logs/json` for SigNoz Cloud.
-func resolveEndpoint(route *router.Route) (string, error) {
+func resolveEndpoint(route *router.Route, defaultPath string) (string, error) {
 	var fromRoute string
 	if route != nil && route.Address != "" {
 		scheme := "http"

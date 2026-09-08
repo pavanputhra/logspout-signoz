@@ -1,14 +1,45 @@
 # Changelog
 
+## v2.1.0
+
+Adds OTLP as a second, additive protocol. Nothing about `signoz://` changes, and
+no configuration needs updating.
+
+### Added
+
+- **`otlp://` and `otlp+https://` routes** speaking OTLP/HTTP with JSON
+  encoding. OTLP is enabled by default on every OpenTelemetry collector, so
+  these routes need no receiver configuration — no `httplogreceiver/json`, no
+  port 8082 — and work against any OTel backend, not only SigNoz. The path
+  defaults to the `/v1/logs` the specification mandates.
+- Attributes keep full fidelity over OTLP. SigNoz's `httplogreceiver` decodes
+  every JSON number as a float and serialises nested objects to strings, so a
+  19-digit id loses precision and nested values arrive as text; OTLP carries
+  integers, nested objects and arrays exactly.
+- A partial success from a collector — a 200 whose body reports rejected
+  records — is treated as a failure. Reading only the status code would drop
+  those records silently.
+- Records are grouped by resource into `resourceLogs`, so a batch spanning
+  several containers is encoded the way the protocol intends.
+
+### Changed
+
+- The deprecation notice for v1 environment variables no longer promises
+  removal in a future major version. They stay supported; there is no planned
+  release that drops them.
+- The README recommends `otlp://` for new installs and documents that a
+  docker-compose `command` written as a string is truncated at the first `&`,
+  which silently discards filters and tuning options.
+
 ## v2.0.0
 
 Breaking release. Configuration now follows logspout's conventions: the
 destination comes from the route address and settings come from the route's
 query string, with environment variables as process-wide defaults.
 
-v1 environment variables still work and log a deprecation warning, so an
-existing deployment keeps shipping logs after upgrading. They will be removed in
-v3.
+v1 environment variables still work and log a deprecation notice, so an
+existing deployment keeps shipping logs after upgrading. They stay supported;
+there is no planned release that removes them.
 
 ### Breaking
 
