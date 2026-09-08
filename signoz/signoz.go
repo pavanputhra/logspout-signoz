@@ -1,340 +1,158 @@
+// Package signoz provides a logspout adapter that ships Docker container logs
+// to SigNoz over HTTP.
+//
+// Routes are configured the logspout way — the destination comes from the route
+// address and settings come from the route's query string, with environment
+// variables as process-wide defaults:
+//
+//	signoz://otel-collector:8082?env=prod
+//	signoz+https://ingest.us.signoz.cloud:443?path=/logs/json
+//
+// Container filtering is logspout's job, not the adapter's: filter.name,
+// filter.id, filter.labels and filter.sources are applied by the router before
+// a message ever reaches Stream.
 package signoz
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
+	"context"
 	"log"
-	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gliderlabs/logspout/router"
 )
 
-var logLevelMap = map[string]int{
-	"TRACE":   1,
-	"DEBUG":   5,
-	"INFO":    9,
-	"WARN":    13,
-	"WARNING": 13,
-	"ERROR":   17,
-	"FATAL":   21,
-}
-
-var standardJsonAttributeKeys = []string{"timestamp", "level", "message", "service", "namespace", "env", "environment"}
-
-func contains(slice []string, item string) bool {
-	for _, v := range slice {
-		if v == item {
-			return true
-		}
-	}
-	return false
-}
-
 func init() {
 	router.AdapterFactories.Register(NewSignozAdapter, "signoz")
 }
 
-//var funcs = template.FuncMap{
-//	"toJSON": func(value interface{}) string {
-//		bytes, err := json.Marshal(value)
-//		if err != nil {
-//			log.Println("error marshaling to JSON: ", err)
-//			return "null"
-//		}
-//		return string(bytes)
-//	},
-//}
+// Adapter streams logspout messages to SigNoz.
+type Adapter struct {
+	route  *router.Route
+	cfg    *Config
+	client *client
 
-func parseJSON(s string) interface{} {
-	var result interface{} // This can hold any valid JSON structure
-	if err := json.Unmarshal([]byte(s), &result); err != nil {
-		return nil // If JSON is invalid, return nil
-	}
-	return result // Return the parsed JSON
+	queue    chan []LogRecord
+	wg       sync.WaitGroup
+	dropped  int
+	dropOnce sync.Once
 }
 
-// NewSignozAdapter returns a configured signoz.Adapter
+// NewSignozAdapter returns a configured signoz.Adapter.
 func NewSignozAdapter(route *router.Route) (router.LogAdapter, error) {
-	autoParseJson := true
-	if _, exists := os.LookupEnv("DISABLE_JSON_PARSE"); exists {
-		autoParseJson = false
+	cfg, err := NewConfig(route)
+	if err != nil {
+		return nil, err
 	}
-
-	autoLogLevelStringMatch := true
-	if _, exists := os.LookupEnv("DISABLE_LOG_LEVEL_STRING_MATCH"); exists {
-		autoLogLevelStringMatch = false
-	}
-
-	envValue, exists := os.LookupEnv("ENV")
-	if !exists {
-		envValue = ""
-	}
-
-	// Parse filter parameters from route.Address
-	filterName := route.Options["filter.name"]
-	filterID := route.Options["filter.id"]
-	filterSources := strings.Split(route.Options["filter.sources"], ",")
-	filterLabels := make(map[string]string)
-
-	if labelsStr := route.Options["filter.labels"]; labelsStr != "" {
-		labelPairs := strings.Split(labelsStr, ",")
-		for _, pair := range labelPairs {
-			parts := strings.Split(pair, ":")
-			if len(parts) == 2 {
-				filterLabels[parts[0]] = parts[1]
-			}
-		}
-	}
-
+	log.Printf("signoz: routing to %s (batch %d, flush %s)", cfg.Endpoint, cfg.BatchSize, cfg.FlushInterval)
 	return &Adapter{
-		route:                   route,
-		autoParseJson:           autoParseJson,
-		autoLogLevelStringMatch: autoLogLevelStringMatch,
-		env:                     envValue,
-		filterName:              filterName,
-		filterID:                filterID,
-		filterSources:           filterSources,
-		filterLabels:            filterLabels,
+		route:  route,
+		cfg:    cfg,
+		client: newClient(cfg),
+		// Bounded: at most MaxBuffer records may be waiting to be sent, so a
+		// collector outage costs a known amount of memory instead of growing
+		// until the container is OOM-killed.
+		queue: make(chan []LogRecord, queueDepth(cfg)),
 	}, nil
 }
 
-// Adapter is a simple adapter that streams log output to a connection without any templating
-type Adapter struct {
-	//conn  net.Conn
-	route                   *router.Route
-	autoParseJson           bool
-	autoLogLevelStringMatch bool
-	env                     string
-	filterName              string
-	filterID                string
-	filterSources           []string
-	filterLabels            map[string]string
+func queueDepth(cfg *Config) int {
+	depth := cfg.MaxBuffer / cfg.BatchSize
+	if depth < 1 {
+		return 1
+	}
+	return depth
 }
 
-type LogMessage struct {
-	Timestamp int `json:"timestamp"`
-	//TraceID        string            `json:"trace_id"`
-	//SpanID         string            `json:"span_id"`
-	//TraceFlags     int               `json:"trace_flags"`
-	SeverityText   string            `json:"severity_text"`
-	SeverityNumber int               `json:"severity_number"`
-	Attributes     map[string]string `json:"attributes"`
-	Resources      map[string]string `json:"resources"`
-	Message        string            `json:"message"`
-}
+// Stream consumes the log stream until it closes, batching records and handing
+// them to a sender goroutine.
+//
+// Batching and sending are deliberately separate: the loop below must never
+// block on HTTP, because logspout's pump delivers messages synchronously and a
+// slow adapter stalls every other route on the same container.
+func (a *Adapter) Stream(logstream chan *router.Message) {
+	ticker := time.NewTicker(a.cfg.FlushInterval)
+	defer ticker.Stop()
 
-func (a *Adapter) Stream(logStream chan *router.Message) {
-	var buffer []LogMessage
-	var mu sync.Mutex
-	ticker := time.NewTicker(5 * time.Second)
-	//defer ticker.Stop()
+	a.wg.Add(1)
+	go a.sendLoop()
 
-	go func() {
-		for range ticker.C {
-			var temp []LogMessage
-			mu.Lock()
-			if len(buffer) > 0 {
-				temp = append(temp, buffer...)
-				buffer = []LogMessage{}
+	batch := make([]LogRecord, 0, a.cfg.BatchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		a.enqueue(batch)
+		batch = make([]LogRecord, 0, a.cfg.BatchSize)
+	}
+
+	for {
+		select {
+		case message, ok := <-logstream:
+			if !ok {
+				// The route is closing. v1 returned here and lost whatever was
+				// buffered, leaving its ticker goroutine running forever.
+				flush()
+				close(a.queue)
+				a.wg.Wait()
+				debug("route closed, sender drained")
+				return
 			}
-			mu.Unlock()
-			if len(temp) > 0 {
-				err := sendLogs(temp)
-				if err != nil {
-					log.Println("Error sending logs:", err)
-				}
+			batch = append(batch, a.convert(message))
+			if len(batch) >= a.cfg.BatchSize {
+				flush()
 			}
+		case <-ticker.C:
+			flush()
 		}
-	}()
-
-	var logMessage LogMessage
-	for message := range logStream {
-
-		// Apply filters
-		if !a.shouldProcessMessage(message) {
-			continue
-		}
-
-		level := "info"
-		leverNumber := logLevelMap[strings.ToUpper(level)]
-
-		serviceName := message.Container.Config.Image
-		if serviceNameFromComposeLabel, exists := message.Container.Config.Labels["com.docker.compose.service"]; exists {
-			serviceName = serviceNameFromComposeLabel
-		}
-		if serviceNameFromSwarmLabel, exists := message.Container.Config.Labels["com.docker.swarm.task.name"]; exists {
-			serviceName = serviceNameFromSwarmLabel
-		}
-		logMessage = LogMessage{
-			Timestamp: int(message.Time.Unix()),
-			//TraceID:        "0", // replace with actual data
-			//SpanID:         "0", // replace with actual data
-			//TraceFlags:     0,   // replace with actual data
-			SeverityText:   level,
-			SeverityNumber: leverNumber,
-			Attributes:     map[string]string{},
-			Resources: map[string]string{
-				"service.name": serviceName,
-			},
-			Message: message.Data,
-		}
-		if a.env != "" {
-			logMessage.Resources["deployment.environment"] = a.env
-		}
-
-		jsonInterface := parseJSON(message.Data)
-		if jsonInterface != nil {
-			if jsonMap, ok := jsonInterface.(map[string]interface{}); ok {
-				if jsonMap["timestamp"] != nil {
-					if timestampStr, ok := jsonMap["timestamp"].(string); ok {
-						timestamp, err := time.Parse(time.RFC3339, timestampStr)
-						if err == nil {
-							logMessage.Timestamp = int(timestamp.Unix())
-						}
-					}
-				}
-
-				if jsonMap["level"] != nil {
-					if levelStr, ok := jsonMap["level"].(string); ok {
-						level = levelStr
-						leverNumber := logLevelMap[strings.ToUpper(level)]
-						logMessage.SeverityText = level
-						logMessage.SeverityNumber = leverNumber
-					}
-				}
-
-				if jsonMap["message"] != nil {
-					if messageStr, ok := jsonMap["message"].(string); ok {
-						logMessage.Message = messageStr
-					}
-				}
-
-				if jsonMap["env"] != nil {
-					if envStr, ok := jsonMap["env"].(string); ok {
-						logMessage.Resources["deployment.environment"] = envStr
-					}
-				}
-				if jsonMap["environment"] != nil {
-					if envStr, ok := jsonMap["environment"].(string); ok {
-						logMessage.Resources["deployment.environment"] = envStr
-					}
-				}
-
-				if jsonMap["service"] != nil {
-					if serviceStr, ok := jsonMap["service"].(string); ok {
-						logMessage.Resources["service.name"] = serviceStr
-					}
-				}
-				if jsonMap["namespace"] != nil {
-					if namespaceStr, ok := jsonMap["namespace"].(string); ok {
-						logMessage.Resources["namespace"] = namespaceStr
-					}
-				}
-				// Get loop through non standard keys and save them as attributes inside logMessage
-				for key, value := range jsonMap {
-					if !contains(standardJsonAttributeKeys, key) {
-						logMessage.Attributes[key] = fmt.Sprintf("%v", value)
-					}
-				}
-			}
-		} else {
-			if a.autoLogLevelStringMatch {
-				for level, number := range logLevelMap {
-					if strings.Contains(message.Data, level) {
-						logMessage.SeverityText = strings.ToLower(level)
-						logMessage.SeverityNumber = number
-						break
-					}
-				}
-			}
-		}
-
-		mu.Lock()
-		buffer = append(buffer, logMessage) // Add log to buffer
-		mu.Unlock()
 	}
 }
 
-func sendLogs(logs []LogMessage) error {
-	// Convert logs to JSON
-	data, err := json.Marshal(logs)
-	if err != nil {
-		return err
+// enqueue hands a batch to the sender, dropping the oldest queued batch if the
+// sender has fallen behind. Losing the oldest logs is better than blocking the
+// pump or growing without limit.
+func (a *Adapter) enqueue(batch []LogRecord) {
+	select {
+	case a.queue <- batch:
+		return
+	default:
 	}
 
-	signozLogEndpoint := os.Getenv("SIGNOZ_LOG_ENDPOINT")
-	if signozLogEndpoint == "" {
-		signozLogEndpoint = "http://localhost:8082"
+	select {
+	case old := <-a.queue:
+		a.dropped += len(old)
+		a.dropOnce.Do(func() {
+			log.Printf("signoz: sender is behind, dropping oldest logs "+
+				"(max_buffer=%d); further drops are logged only with DEBUG set", a.cfg.MaxBuffer)
+		})
+		debug("dropped", len(old), "records; total dropped", a.dropped)
+	default:
 	}
 
-	// Send HTTP POST request
-	fmt.Println("Sending logs to: ", signozLogEndpoint)
-	resp, err := http.Post(signozLogEndpoint, "application/json", bytes.NewBuffer(data))
-	if err != nil {
-		return err
+	select {
+	case a.queue <- batch:
+	default:
+		a.dropped += len(batch)
+		debug("dropped", len(batch), "records; total dropped", a.dropped)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to send logs, status: %s", resp.Status)
-	}
-	return nil
 }
 
-// shouldProcessMessage checks if a message should be processed based on filter criteria
-func (a *Adapter) shouldProcessMessage(message *router.Message) bool {
-	// Filter by container ID
-	if a.filterID != "" && message.Container.ID != a.filterID {
-		return false
-	}
-
-	// Filter by container name
-	if a.filterName != "" && !a.matchesFilterPattern(message.Container.Name, a.filterName) {
-		return false
-	}
-
-	// Filter by sources
-	if len(a.filterSources) > 0 && a.filterSources[0] != "" {
-		sourceFound := false
-		for _, source := range a.filterSources {
-			if message.Source == source {
-				sourceFound = true
-				break
-			}
+// sendLoop posts queued batches until the queue is closed.
+func (a *Adapter) sendLoop() {
+	defer a.wg.Done()
+	for batch := range a.queue {
+		ctx, cancel := context.WithTimeout(context.Background(), a.sendDeadline())
+		if err := a.client.send(ctx, batch); err != nil {
+			// Errors go through log.Println, never fmt.Println, and carry no
+			// per-flush chatter: logspout collects its own container's stdout,
+			// so anything printed here comes back around as a log line.
+			log.Printf("signoz: dropping %d records: %v", len(batch), err)
 		}
-		if !sourceFound {
-			return false
-		}
+		cancel()
 	}
-
-	// Filter by labels
-	if len(a.filterLabels) > 0 {
-		for labelKey, labelPattern := range a.filterLabels {
-			labelValue, exists := message.Container.Config.Labels[labelKey]
-			if !exists {
-				return false
-			}
-			if !a.matchesFilterPattern(labelValue, labelPattern) {
-				return false
-			}
-		}
-	}
-
-	return true
 }
 
-// matchesFilterPattern checks if the container name matches the given pattern
-func (a *Adapter) matchesFilterPattern(input, filterPattern string) bool {
-	if strings.HasPrefix(filterPattern, "*") && strings.HasSuffix(filterPattern, "*") {
-		return strings.Contains(input, filterPattern[1:len(filterPattern)-1])
-	} else if strings.HasPrefix(filterPattern, "*") {
-		return strings.HasSuffix(input, filterPattern[1:])
-	} else if strings.HasSuffix(filterPattern, "*") {
-		return strings.HasPrefix(input, filterPattern[:len(filterPattern)-1])
-	}
-	return input == filterPattern
+// sendDeadline bounds one batch including its retries.
+func (a *Adapter) sendDeadline() time.Duration {
+	return a.cfg.Timeout*time.Duration(a.cfg.RetryCount+1) + 30*time.Second
 }

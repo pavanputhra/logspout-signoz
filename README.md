@@ -1,34 +1,45 @@
 # logspout-signoz
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker Pulls](https://img.shields.io/docker/pulls/pavanputhra/logspout-signoz)](https://hub.docker.com/r/pavanputhra/logspout-signoz)
 
-A minimalistic adapter for [logspout](https://github.com/gliderlabs/logspout) to send notifications to [SigNoz](https://signoz.io/) using http(s) endpoint.
+A [logspout](https://github.com/gliderlabs/logspout) adapter that ships Docker
+container logs to [SigNoz](https://signoz.io/) over HTTP.
 
-### Why do I need this?
+**Use `pavanputhra/logspout-signoz:v2`.**
 
-Let's say you are running your application using docker or docker compose. You want to send logs to
-SigNoz, then you can use this adapter to send logs to SigNoz.
+> **Already running v1?** v2 configures the destination through the logspout
+> route URI instead of `SIGNOZ_LOG_ENDPOINT`. Your existing environment
+> variables still work — they log a deprecation warning rather than breaking —
+> so you can upgrade first and move the settings into the route afterwards. See
+> [Migrating from v1](#migrating-from-v1).
 
-### What features does it provide?
+### Which tag to use
 
-1. Direct post to signoz http endpoint. So this adapter can send more detailed logs.
-1. Auto detect service name, so no special configuration needed.
-   1. For JSON logs, picks name from JSON service field.
-   1. Otherwise pick service name from docker-compose service name.
-   1. Otherwise use docker image name as service name
-1. Auto detect env name, so no special configuration needed
-   1. For JSON logs, picks name from JSON env field.
-   1. Otherwise pick env from logspout-signoz env variable ENV.
-1. Auto parse JSON logs.
-   1. Map well known JSON log attribute to appropriate Signoz log payload fields. e.g `level` to `SeverityText`, etc
-   1. Pack other JSON attribute to into attributes key of Signoz log payload.
+| Tag | What it is |
+|---|---|
+| `v2` | Latest v2.x. **Recommended** — picks up fixes, never a breaking change. |
+| `v2.0.0` | An exact release, for reproducible deployments. |
+| `latest` | Whatever the newest release is. Will move to v3 when that lands. |
+| `edge` | Built from `main`. Untagged and unstable; for trying fixes early. |
+| `v1` | Frozen final v1 build. Only if you cannot upgrade yet. |
 
-### How to use it?
+## Why use it
 
-First enable http log receiver by adding following to `otel-collector-config.yaml`
+- Sends directly to SigNoz's HTTP log endpoint, self-hosted or Cloud.
+- Detects `service.name` from Docker Compose and Swarm labels — usually no
+  configuration needed.
+- Parses JSON logs from the loggers people actually use (winston, pino, bunyan,
+  zap, logrus), mapping levels, timestamps and message bodies to their SigNoz
+  equivalents and keeping the rest as typed attributes.
+- Detects log levels in plain-text logs.
+- Carries `trace_id`/`span_id` through, so logs link to traces in SigNoz.
 
-1. Add `httplogreceiver/json` to `receivers` section
-1. Add `httplogreceiver/json` to `service.pipelines.logs.receivers` section
+## Quick start
+
+### 1. Enable the HTTP log receiver in SigNoz
+
+Self-hosted only; skip this for SigNoz Cloud. In `otel-collector-config.yaml`:
 
 ```yaml
 receivers:
@@ -36,76 +47,238 @@ receivers:
     endpoint: 0.0.0.0:8082
     source: json
 
-...
-
 service:
-   pipelines:
-      logs:
-         receivers: [otlp, tcplog/docker, httplogreceiver/json]
-         processors: [batch]
-         exporters: [clickhouselogsexporter]
+  pipelines:
+    logs:
+      receivers: [otlp, tcplog/docker, httplogreceiver/json]
+      processors: [batch]
+      exporters: [clickhouselogsexporter]
 ```
 
-Open the port 8082 in your otel-collector container as follows:
+Expose the port on the collector container:
 
 ```yaml
 services:
-   otel-collector:
-   image: signoz/signoz-otel-collector:${OTELCOL_TAG:-0.102.10}
-   container_name: signoz-otel-collector
-   ports:
+  otel-collector:
+    image: signoz/signoz-otel-collector:${OTELCOL_TAG}
+    ports:
       - "8082:8082" # SigNoz logs
 ```
 
-Then run the logspout-signoz container with the following command: 
-(Run this on each node where you want to collect logs)
+### 2. Run the adapter
+
+Run one per node, mounting the Docker socket:
 
 ```bash
 docker run -d \
-        --volume=/var/run/docker.sock:/var/run/docker.sock \
-        -e 'SIGNOZ_LOG_ENDPOINT=http://1.2.3.4:8082' \
-        -e 'ENV=prod' \
-        pavanputhra/logspout-signoz \
-        signoz://localhost:8082
+  --name logspout-signoz \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  --volume=/etc/hostname:/etc/host_hostname:ro \
+  --restart=always \
+  pavanputhra/logspout-signoz:v2 \
+  'signoz://otel-collector:8082?env=prod'
 ```
 
-### Configuration options
+The **route URI is the configuration**: the address is where logs go, and the
+query string sets everything else.
 
-You can use the following environment variables to configure the adapter:
+### SigNoz Cloud
 
-- `SIGNOZ_LOG_ENDPOINT`: The URL of the SigNoz log endpoint. Default: `http://localhost:8082`
-- `ENV`: The environment name.
-- `DISABLE_JSON_PARSE`: Any string value will disable JSON parsing and sends the JSON log as it is.
-- `DISABLE_LOG_LEVEL_STRING_MATCH`: For non-JSON logs, this adapter tries to detect log level by trying to search string
-   "ERROR", "INFO", etc. and map it to Signoz log severity. Assigining any string value to this env var will disable 
-   detection of log level.
+Use the `+https` transport and pass your ingestion key. logspout drops the path
+from a route URI, so the path is given as an option:
 
+```bash
+docker run -d \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  -e SIGNOZ_INGESTION_KEY=<your-key> \
+  pavanputhra/logspout-signoz:v2 \
+  'signoz+https://ingest.us.signoz.cloud:443?path=/logs/json&env=prod'
+```
 
-### How to build and run it?
+Put the key in `SIGNOZ_INGESTION_KEY` rather than the URI so it does not show up
+in `docker ps` output or your shell history.
 
-Follow the instructions to build your own [logspout image](https://github.com/gliderlabs/logspout/tree/master/custom) including this module.
-In a nutshell, copy the contents of the `custom` folder and add the following import line above others in `modules.go`:
+### docker-compose
+
+```yaml
+services:
+  logspout-signoz:
+    image: pavanputhra/logspout-signoz:v2
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/hostname:/etc/host_hostname:ro
+    command: 'signoz://otel-collector:8082?env=prod'
+    depends_on:
+      - otel-collector
+```
+
+## Configuration
+
+Every option can be set two ways: as a query parameter on the route URI, or as
+an environment variable. **The route option wins**, which is what lets one
+logspout process feed several destinations.
+
+| Option (URI) | Environment variable | Default | Description |
+|---|---|---|---|
+| `path` | `SIGNOZ_PATH` | `/` | Request path. SigNoz Cloud needs `/logs/json`. |
+| `ingestion_key` | `SIGNOZ_INGESTION_KEY` | — | Sent as the `signoz-ingestion-key` header (SigNoz Cloud). |
+| `env` | `SIGNOZ_ENV` | — | Sets the `deployment.environment` resource. |
+| `service_name` | `SIGNOZ_SERVICE_NAME` | auto | Forces `service.name` instead of detecting it. |
+| `host_name` | `SIGNOZ_HOST_NAME` | `/etc/host_hostname` | Sets the `host.name` resource. |
+| `parse_json` | `SIGNOZ_PARSE_JSON` | `true` | Parse JSON log lines into fields. |
+| `detect_level` | `SIGNOZ_DETECT_LEVEL` | `true` | Detect the level in plain-text lines. |
+| `batch_size` | `SIGNOZ_BATCH_SIZE` | `100` | Records per request. |
+| `flush_interval` | `SIGNOZ_FLUSH_INTERVAL` | `5s` | Send a partial batch after this long. |
+| `max_buffer` | `SIGNOZ_MAX_BUFFER` | `10000` | Records held while the collector is unreachable. Oldest are dropped beyond this. |
+| `timeout` | `SIGNOZ_TIMEOUT` | `10s` | HTTP timeout per attempt. |
+| `retry_count` | `SIGNOZ_RETRY_COUNT` | `3` | Retries for network errors, 429 and 5xx. 4xx is never retried. |
+| `tls_skip_verify` | `SIGNOZ_TLS_SKIP_VERIFY` | `false` | Skip TLS verification (self-signed certificates). |
+
+Set `DEBUG=1` for verbose logging.
+
+### Choosing which containers to ship
+
+Filtering is handled by logspout itself, using its standard parameters:
+
+```bash
+# only containers whose name starts with my-proj-
+'signoz://otel-collector:8082?filter.name=my-proj-*'
+
+# only stderr
+'signoz://otel-collector:8082?filter.sources=stderr'
+
+# only containers with a matching label
+'signoz://otel-collector:8082?filter.labels=logging:signoz'
+```
+
+To exclude a container instead, set `LOGSPOUT=ignore` in its environment, or run
+logspout with `EXCLUDE_LABEL=<label>` and put that label on the container.
+
+The adapter's own container is not excluded automatically, so if you want to
+keep its startup messages out of SigNoz, set `LOGSPOUT=ignore` on it.
+
+### Several destinations
+
+Because the destination comes from the route, one logspout can serve more than
+one. Separate routes with commas:
+
+```bash
+docker run -d --volume=/var/run/docker.sock:/var/run/docker.sock \
+  pavanputhra/logspout-signoz:v2 \
+  'signoz://collector-a:8082?filter.name=team-a-*,signoz://collector-b:8082?filter.name=team-b-*'
+```
+
+### Multi-line logs
+
+Stack traces arrive one line at a time. Chain logspout's `multiline` adapter,
+which is built into the image:
+
+```bash
+'multiline+signoz://otel-collector:8082?env=prod'
+```
+
+Its behaviour is controlled by the `MULTILINE_*` environment variables
+documented by [logspout](https://github.com/gliderlabs/logspout/tree/master/adapters/multiline).
+
+## How logs are mapped
+
+### service.name
+
+The first of these that is present:
+
+1. a `service` field in the JSON log line
+2. the `service_name` option
+3. `com.docker.swarm.service.name`
+4. `com.docker.compose.service`
+5. the container name
+6. the image repository name (`ghcr.io/acme/api:1.4.2` becomes `api`)
+
+### JSON logs
+
+Recognised keys are promoted; everything else becomes an attribute with its JSON
+type preserved, so numbers stay numbers in SigNoz.
+
+| Field | Keys accepted |
+|---|---|
+| Body | `body`, `message`, `msg`, `log` |
+| Timestamp | `timestamp`, `time`, `ts`, `@timestamp` |
+| Level | `level`, `severity`, `severity_text`, `levelname`, `loglevel` |
+| Service | `service`, `service_name`, `service.name` |
+| Environment | `env`, `environment`, `deployment_environment` |
+| Trace | `trace_id`, `traceId`, `trace.id`, `span_id`, `spanId`, `span.id` |
+
+Timestamps may be RFC3339 strings or numeric epochs in seconds, milliseconds,
+microseconds or nanoseconds. Levels may be names (`warn`, `error`, ...) or the
+numeric scale used by pino and bunyan (10 trace through 60 fatal).
+
+## Migrating from v1
+
+v1 read its destination from `SIGNOZ_LOG_ENDPOINT` and ignored the route
+address. v2 uses the route address, but **`SIGNOZ_LOG_ENDPOINT` still wins if it
+is set**, so an existing deployment keeps working and warns. Remove it once you
+have moved the address into the route.
+
+| v1 | v2 | Still works in v2? |
+|---|---|---|
+| `SIGNOZ_LOG_ENDPOINT=http://host:8082` | `signoz://host:8082` | Yes, with a warning |
+| `ENV=prod` | `?env=prod` or `SIGNOZ_ENV` | Yes, with a warning |
+| `DISABLE_LOG_LEVEL_STRING_MATCH=1` | `?detect_level=false` | Yes, with a warning |
+| `DISABLE_JSON_PARSE=1` | `?parse_json=false` | See below |
+| `?filter.name=...` handled by the adapter | handled by logspout | Yes — unchanged for users |
+
+`DISABLE_JSON_PARSE` never actually worked in v1: the value was read into a
+field that was never used, so JSON parsing always ran. v2 does not start
+honouring it silently — it warns and points at `?parse_json=false`.
+
+Other behaviour changes worth knowing about:
+
+- **Timestamps are nanoseconds.** v1 sent whole seconds, so logs within the same
+  second could not be ordered.
+- **Attributes keep their JSON types.** v1 stringified everything, so numeric
+  fields could not be compared numerically in SigNoz.
+- **Swarm `service.name` comes from the service label**, not the task label. v1
+  used `com.docker.swarm.task.name`, which changes on every restart and created
+  a new service in SigNoz each time. Expect existing Swarm dashboards to need
+  updating to the stable name.
+- **The body key is `body`** rather than `message`. SigNoz accepts both.
+- **Image names are reduced to the repository name.**
+- The image now also includes logspout's `/health` endpoint, the routes API and
+  the `multiline` adapter.
+
+Pin `pavanputhra/logspout-signoz:v1` to stay on v1.
+
+## Building your own image
+
+```bash
+docker build -t logspout-signoz .
+```
+
+The build compiles logspout with this adapter from the source in the checkout —
+no module proxy involved — and cross-compiles, so multi-arch builds do not need
+QEMU. Pin a different logspout with `--build-arg LOGSPOUT_VERSION=v3.2.14`.
+
+To add other logspout modules, edit [`custom/modules.go`](custom/modules.go).
+
+To use the adapter from your own logspout build, import it:
+
 ```go
 package main
 
 import (
-  _ "github.com/pavanputhra/logspout-signoz/signoz"
-  // ...
+    _ "github.com/pavanputhra/logspout-signoz/v2/signoz"
 )
 ```
 
-If you'd like to select a particular version create the following `Dockerfile`:
-```
-ARG VERSION
-FROM gliderlabs/logspout:$VERSION
+## Releasing
 
-ONBUILD COPY ./build.sh /src/build.sh
-ONBUILD COPY ./modules.go /src/modules.go
-```
+Image tags are published by [`.github/workflows/release.yml`](.github/workflows/release.yml):
 
-Then build your image with: `docker build --no-cache --pull --force-rm --build-arg VERSION=v3.2.14 -f dockerfile -t logspout:v3.2.14 .`
+- pushing a git tag `vX.Y.Z` publishes `vX.Y.Z`, `vX` and `latest`
+- commits to `main` publish `edge` and a short-SHA tag
 
+`latest` therefore only moves on a deliberate release.
 
-## Logspout configuration options
+## License
 
-You can use the standard logspout filters to filter container names and output types:
+MIT
