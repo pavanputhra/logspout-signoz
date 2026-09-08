@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.0.0 (unreleased)
+## v2.0.0
 
 Breaking release. Configuration now follows logspout's conventions: the
 destination comes from the route address and settings come from the route's
