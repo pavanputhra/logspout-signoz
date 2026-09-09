@@ -20,7 +20,7 @@ HTTP log endpoint.
 | Tag | What it is |
 |---|---|
 | `v2` | Latest v2.x. **Recommended** — picks up fixes, never a breaking change. |
-| `v2.0.0` | An exact release, for reproducible deployments. |
+| `v2.1.0` | An exact release, for reproducible deployments. Every release keeps its own tag. |
 | `latest` | Whatever the newest release is. Moves across major versions. |
 | `edge` | Built from `main`. Untagged and unstable; for trying fixes early. |
 | `v1` | Frozen final v1 build. Only if you cannot upgrade yet. |
